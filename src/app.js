@@ -16,11 +16,39 @@ console.log("✅ Env Loaded. Cloudinary Key exists:", !!process.env.CLOUDINARY_A
 
 app.use(helmet());
 
-// CORS configuration - Allows your frontend to send cookies (credentials)
-app.use(cors({ 
-  origin: process.env.CLIENT_URL || "http://localhost:3000", 
-  credentials: true 
-}));
+// CORS configuration - read allowed origins from environment for security
+// Prefer `ALLOWED_ORIGINS` as a comma-separated list. Fallback to CLIENT_URL
+// or NEXT_PUBLIC_API_URL for backwards compatibility. Only add localhost
+// origins during development.
+const allowedOrigins = (() => {
+  const fromEnv = process.env.ALLOWED_ORIGINS || process.env.CLIENT_URL || process.env.NEXT_PUBLIC_API_URL || "";
+  const list = fromEnv
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  if (process.env.NODE_ENV !== "production") {
+    // keep local dev origins when not in production
+    list.push("http://localhost:3000", "http://127.0.0.1:3000");
+  }
+
+  // remove duplicates
+  return Array.from(new Set(list));
+})();
+
+console.log("CORS allowed origins:", allowedOrigins);
+
+app.use(
+  cors({
+    origin: (origin, cb) => {
+      // Allow non-browser tools or same-origin (no origin)
+      if (!origin) return cb(null, true);
+      if (allowedOrigins.includes(origin)) return cb(null, true);
+      cb(new Error('CORS policy: This origin is not allowed'));
+    },
+    credentials: true,
+  })
+);
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
