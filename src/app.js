@@ -44,7 +44,13 @@ app.use(
       // Allow non-browser tools or same-origin (no origin)
       if (!origin) return cb(null, true);
       if (allowedOrigins.includes(origin)) return cb(null, true);
-      cb(new Error('CORS policy: This origin is not allowed'));
+      // Don't throw an error here — return false so CORS middleware
+      // responds without adding CORS headers, and the browser will
+      // block the request. Throwing an error here bubbled to the
+      // global error handler and returned 500, which removed the
+      // `Access-Control-Allow-Origin` header entirely.
+      console.warn('Blocked CORS origin:', origin);
+      return cb(null, false);
     },
     credentials: true,
   })
