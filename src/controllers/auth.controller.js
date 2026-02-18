@@ -7,42 +7,61 @@ import AdminModel from "../models/admin.model.js";
 export const login = async (req, res, next) => {
   try {
     const { email, password } = req.body;
-
-    console.log(`Login attempt for: ${email}`);
     const admin = await Admin.findOne({ email }).select('+password');
     if (!admin) {
-      console.warn(`Login failed: admin not found (${email})`);
-      return res.status(401).json({ message: "Invalid credentials" });
+      return res.status(401).json({ message: "Invalid email or password" });
     }
 
     const match = await bcrypt.compare(password, admin.password);
     if (!match) {
-      console.warn(`Login failed: invalid password for ${email}`);
-      return res.status(401).json({ message: "Invalid credentials" });
+      return res.status(401).json({ message: "Invalid email or password" });
     }
 
+    // Generate Token
     const token = jwt.sign(
-      { adminId: admin._id },
+      { adminId: admin._id }, // Ensure this matches req.adminId in your middleware
       process.env.JWT_SECRET,
       { expiresIn: "7d" }
     );
 
-    res.cookie("token", token, {
+    const isProd = process.env.NODE_ENV === "production";
+
+    // 🚀 PRODUCTION COOKIE STRATEGY
+    const cookieOptions = {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
+      secure: true,
+      sameSite: "none",
+      path: "/",
       maxAge: 7 * 24 * 60 * 60 * 1000,
+    };
+
+    // Safety-net: allow local dev on localhost without Secure/SameSite=None
+    if (!isProd && req.hostname === 'localhost') {
+      cookieOptions.secure = false;
+      cookieOptions.sameSite = "lax";
+    }
+
+    res.cookie("token", token, cookieOptions);
+    res.json({ 
+      success: true, 
+      message: "Login successful",
+      data: { email: admin.email, avatar: admin.avatar } 
     });
-    console.log(`Login successful for: ${email}`);
-    res.json({ message: "Login successful" });
   } catch (err) {
     next(err);
   }
 };
 
 export const logout = (req, res) => {
-  res.clearCookie("token");
-  res.json({ message: "Logged out" });
+  // To clear a cross-site cookie, you MUST pass the same options 
+  // (secure, sameSite) as when you set it.
+  res.clearCookie("token", {
+    httpOnly: true,
+    secure: true,
+    sameSite: "none",
+    path: "/",
+  });
+  res.json({ message: "Logged out successfully" });
 };
 
 export const getProfile = async (req, res, next) => {
