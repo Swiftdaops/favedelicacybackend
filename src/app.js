@@ -10,48 +10,32 @@ import routes from './routes.js';
 
 const app = express();
 
+// When running behind a proxy (e.g., Render, Heroku, Vercel), express must
+// trust the proxy so it correctly reads the client IP from `X-Forwarded-For`.
+// This is required for `express-rate-limit` and other middleware to see
+// the real client IP instead of the proxy's address.
+// Explicitly trust the first proxy.
+app.set('trust proxy', 1);
+
 // --- Debugging (Optional: Remove after testing) ---
 console.log("✅ Env Loaded. Cloudinary Key exists:", !!process.env.CLOUDINARY_API_KEY);
+if (!process.env.CLOUDINARY_API_SECRET || !process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_CLOUD_NAME) {
+  console.warn('⚠️ Cloudinary env vars appear missing or incomplete. Uploads will fail with 401/Invalid Signature.');
+}
 // --------------------------------------------------
 
 app.use(helmet());
 
-// CORS configuration - read allowed origins from environment for security
-// Prefer `ALLOWED_ORIGINS` as a comma-separated list. Fallback to CLIENT_URL
-// or NEXT_PUBLIC_API_URL for backwards compatibility. Only add localhost
-// origins during development.
-const allowedOrigins = (() => {
-  const fromEnv = process.env.ALLOWED_ORIGINS || process.env.CLIENT_URL || process.env.NEXT_PUBLIC_API_URL || "";
-  const list = fromEnv
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-
-  if (process.env.NODE_ENV !== "production") {
-    // keep local dev origins when not in production
-    list.push("http://localhost:3000", "http://127.0.0.1:3000");
-  }
-
-  // remove duplicates
-  return Array.from(new Set(list));
-})();
-
-console.log("CORS allowed origins:", allowedOrigins);
+// CORS configuration - allows the frontend to send cookies (credentials)
+const allowedOrigin =
+  process.env.CLIENT_URL ||
+  (process.env.NODE_ENV === 'production'
+    ? 'https://favedelicacy.store'
+    : 'http://localhost:3000');
 
 app.use(
   cors({
-    origin: (origin, cb) => {
-      // Allow non-browser tools or same-origin (no origin)
-      if (!origin) return cb(null, true);
-      if (allowedOrigins.includes(origin)) return cb(null, true);
-      // Don't throw an error here — return false so CORS middleware
-      // responds without adding CORS headers, and the browser will
-      // block the request. Throwing an error here bubbled to the
-      // global error handler and returned 500, which removed the
-      // `Access-Control-Allow-Origin` header entirely.
-      console.warn('Blocked CORS origin:', origin);
-      return cb(null, false);
-    },
+    origin: allowedOrigin,
     credentials: true,
   })
 );
@@ -64,6 +48,8 @@ app.use(cookieParser());
 const limiter = rateLimit({ 
   windowMs: 15 * 60 * 1000, 
   max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
   message: { message: "Too many requests, please try again later." }
 });
 app.use('/api', limiter);
@@ -72,13 +58,15 @@ app.use('/api', limiter);
 app.use('/api', routes);
 
 // Global Health Check
-app.get('/', (req, res) => res.json({ ok: true, status: "Server is running" }));
+app.get('/', (req, res) => res.json({ ok: true, environment: process.env.NODE_ENV }));
 
 // Global Error Handler - Prevents the 500 error from crashing the whole server process
 app.use((err, req, res, next) => {
-  console.error("Internal Server Error:", err.stack);
-  res.status(500).json({ 
-    message: err.message || "Something went wrong on the server" 
+  console.error("Internal Server Error:", err && err.message, err);
+  const message = err && (err.message || err.toString()) || "Something went wrong on the server";
+  res.status(err.status || 500).json({
+    message,
+    ...(process.env.NODE_ENV !== 'production' ? { stack: err.stack } : {}),
   });
 });
 
